@@ -100,6 +100,7 @@ WriteMakefile(
           recommends => {
             'Math::BigInt'   => 0,
             'Math::BigFloat' => '1.16',
+            'Hash::Ordered'  => '0.005',
           }
         },
         test => {

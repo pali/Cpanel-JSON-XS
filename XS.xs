@@ -331,6 +331,7 @@ mingw_modfl(long double x, long double *ip)
 #define F_ALLOW_DUPKEYS   0x00800000UL
 #define F_REQUIRE_TYPES   0x01000000UL
 #define F_TYPE_ALL_STRING 0x02000000UL
+#define F_HASH_ORDERED    0x04000000UL
 #define F_HOOK            0x80000000UL /* some hooks exist, so slow-path processing */
 
 #define F_PRETTY    F_INDENT | F_SPACE_BEFORE | F_SPACE_AFTER
@@ -3666,11 +3667,40 @@ fail:
   return 0;
 }
 
+static HV *
+newHV_ordered (pTHX)
+{
+  HV *hv;
+  SV *sv;
+  SV *errsv;
+
+  sv = newSVpvs ("require Hash::Ordered && Hash::Ordered->TIEHASH()");
+  eval_sv (sv, G_SCALAR);
+  SvREFCNT_dec (sv);
+
+  /* rethrow current error */
+  errsv = ERRSV;
+  if (SvROK (errsv))
+    croak (NULL);
+  else if (SvTRUE (errsv))
+    croak ("%" SVf, SVfARG (errsv));
+
+  {
+    dSP;
+    sv = POPs;
+    PUTBACK;
+  }
+
+  hv = newHV ();
+  hv_magic (hv, (GV*)sv, PERL_MAGIC_tied);
+  return hv;
+}
+
 static SV *
 decode_hv (pTHX_ dec_t *dec, SV *typesv)
 {
   SV *sv;
-  HV *hv = newHV ();
+  HV *hv;
   HV *typehv = NULL;
   SV *typerv;
   int allow_squote = dec->json.flags & F_ALLOW_SQUOTE;
@@ -3678,12 +3708,20 @@ decode_hv (pTHX_ dec_t *dec, SV *typesv)
   int allow_dupkeys = dec->json.flags & F_ALLOW_DUPKEYS;
   char endstr = '"';
 
+  if (UNLIKELY (dec->json.flags & F_HASH_ORDERED))
+    hv = newHV_ordered (aTHX);
+  else
+    hv = newHV ();
+
   DEC_INC_DEPTH;
   decode_ws (dec);
 
   if (typesv)
     {
-      typehv = newHV ();
+      if (UNLIKELY (dec->json.flags & F_HASH_ORDERED))
+        typehv = newHV_ordered (aTHX);
+      else
+        typehv = newHV ();
       typerv = newRV_noinc ((SV *)typehv);
       SvSetMagicSV (typesv, typerv);
     }
@@ -3745,6 +3783,7 @@ decode_hv (pTHX_ dec_t *dec, SV *typesv)
                     {
                       value_typesv = newSV (0);
                       (void)hv_store_ent (typehv, key, value_typesv, 0);
+                      SvSETMAGIC (value_typesv);
                     }
 
                   value = decode_sv (aTHX_ dec, value_typesv);
@@ -3755,6 +3794,7 @@ decode_hv (pTHX_ dec_t *dec, SV *typesv)
                     }
 
                   (void)hv_store_ent (hv, key, value, 0);
+                  SvSETMAGIC (value);
                   SvREFCNT_dec (key);
 
                   break;
@@ -3786,6 +3826,7 @@ decode_hv (pTHX_ dec_t *dec, SV *typesv)
                     {
                       value_typesv = newSV (0);
                       (void)hv_store (typehv, key, len, value_typesv, 0);
+                      SvSETMAGIC (value_typesv);
                     }
 
                   value = decode_sv (aTHX_ dec, value_typesv);
@@ -3799,6 +3840,7 @@ decode_hv (pTHX_ dec_t *dec, SV *typesv)
 #else
                   hv_store (hv, key, len, value, 0);
 #endif
+                  SvSETMAGIC (value);
                   break;
                 }
 
@@ -4535,6 +4577,7 @@ void ascii (JSON *self, int enable = 1)
         allow_dupkeys   = F_ALLOW_DUPKEYS
         require_types   = F_REQUIRE_TYPES
         type_all_string = F_TYPE_ALL_STRING
+        hash_ordered    = F_HASH_ORDERED
     PPCODE:
         if (enable)
           self->flags |=  ix;
@@ -4568,6 +4611,7 @@ void get_ascii (JSON *self)
         get_allow_dupkeys   = F_ALLOW_DUPKEYS
         get_require_types   = F_REQUIRE_TYPES
         get_type_all_string = F_TYPE_ALL_STRING
+        get_hash_ordered    = F_HASH_ORDERED
     PPCODE:
         XPUSHs (boolSV (self->flags & ix));
 
